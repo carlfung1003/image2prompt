@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Build a static gallery from EvoLinkAI/awesome-gpt-image-2-prompts cases.
+"""Build a static gallery from multiple GPT-Image-2 prompt repos.
+
+Sources (see SOURCES below):
+  - EvoLinkAI/awesome-gpt-image-2-prompts  → cases/<category>.md
+  - ZeroLu/awesome-gpt-image               → README.md (## sections + ### cases)
+  - cases-local/<category>.md               → Carl's local additions
 
 Usage:
-  python3 build.py            # uses ./.cache/awesome-gpt-image-2-prompts (clones if missing, pulls if present)
-  python3 build.py --src PATH # use an existing local clone
-
-The output is index.html in the same directory as this script.
-The HTML template lives in template.html (extracted so the script stays small).
+  python3 build.py            # clones (or pulls) each upstream into .cache/
 """
 import argparse
 import json
@@ -15,32 +16,25 @@ import subprocess
 import sys
 from pathlib import Path
 
-UPSTREAM = "https://github.com/EvoLinkAI/awesome-gpt-image-2-prompts.git"
 HERE = Path(__file__).resolve().parent
-DEFAULT_SRC = HERE / ".cache" / "awesome-gpt-image-2-prompts"
+CACHE = HERE / ".cache"
+LOCAL_CASES = HERE / "cases-local"
 OUT = HERE / "index.html"
 
-CATEGORIES = ["poster", "portrait", "character", "ad-creative", "ecommerce", "comparison", "ui"]
+# ────────────────────────────────────────────────────────────────────────────
+# EvoLink parser — original behavior, per-category files
+# ────────────────────────────────────────────────────────────────────────────
+EVOLINK_CATS = ["poster", "portrait", "character", "ad-creative", "ecommerce", "comparison", "ui"]
 
-CASE_RE = re.compile(r"^###\s+Case\s+(?P<num>\d+):\s+(?P<rest>.+?)$", re.M)
+EVOLINK_CASE_RE = re.compile(r"^###\s+Case\s+(?P<num>\d+):\s+(?P<rest>.+?)$", re.M)
 LINK_RE = re.compile(r"\[(?P<title>[^\]]+)\]\((?P<url>[^)]+)\)")
 AUTHOR_RE = re.compile(r"by\s+\[@?(?P<author>[^\]]+)\]\((?P<url>[^)]+)\)")
-IMG_RE = re.compile(r'<img[^>]+src="(?P<src>[^"]+)"', re.I)
+IMG_HTML_RE = re.compile(r'<img[^>]+src="(?P<src>[^"]+)"', re.I)
+IMG_MD_RE = re.compile(r'!\[[^\]]*\]\((?P<src>[^)\s]+)')
 PROMPT_RE = re.compile(r"\*\*Prompt[s]?:\*\*\s*\n+\s*```(?:\w*)?\n(?P<prompt>.*?)\n```", re.S)
 
 
-def ensure_clone(src: Path) -> Path:
-    if (src / ".git").exists():
-        print(f"  pulling {src}")
-        subprocess.run(["git", "-C", str(src), "pull", "--ff-only"], check=False, capture_output=True)
-    else:
-        print(f"  cloning {UPSTREAM} -> {src}")
-        src.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "clone", "--depth", "1", UPSTREAM, str(src)], check=True)
-    return src
-
-
-def parse_case_block(block, category, num):
+def parse_evolink_block(block, category, num):
     head = block.split("\n", 1)[0]
     title_match = LINK_RE.search(head)
     title = title_match.group("title").strip() if title_match else f"Case {num}"
@@ -50,7 +44,7 @@ def parse_case_block(block, category, num):
     author = author_match.group("author").strip().lstrip("@") if author_match else ""
     author_url = author_match.group("url").strip() if author_match else ""
 
-    img_match = IMG_RE.search(block)
+    img_match = IMG_HTML_RE.search(block)
     if not img_match:
         return None
     img_src = img_match.group("src")
@@ -60,7 +54,6 @@ def parse_case_block(block, category, num):
         return None
 
     return {
-        "id": f"{category}-{num}",
         "category": category,
         "num": int(num),
         "title": title,
@@ -73,36 +66,225 @@ def parse_case_block(block, category, num):
     }
 
 
-def parse_category_file(path, category):
-    text = path.read_text(encoding="utf-8")
-    matches = list(CASE_RE.finditer(text))
-    out = []
-    for i, m in enumerate(matches):
-        start = m.start()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        c = parse_case_block(text[start:end], category, m.group("num"))
-        if c:
-            out.append(c)
-    return out
-
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--src", type=Path, default=DEFAULT_SRC,
-                    help="Path to a local clone (auto-cloned/pulled if not given)")
-    args = ap.parse_args()
-    src = ensure_clone(args.src)
-
-    all_cases = []
-    for cat in CATEGORIES:
+def parse_evolink(src: Path):
+    cases = []
+    for cat in EVOLINK_CATS:
         path = src / "cases" / f"{cat}.md"
         if not path.exists():
             print(f"  WARN: {path} missing")
             continue
-        cs = parse_category_file(path, cat)
+        text = path.read_text(encoding="utf-8")
+        matches = list(EVOLINK_CASE_RE.finditer(text))
+        n_before = len(cases)
+        for i, m in enumerate(matches):
+            start = m.start()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            c = parse_evolink_block(text[start:end], cat, m.group("num"))
+            if c:
+                c["id"] = f"evolinkai-{cat}-{m.group('num')}"
+                c["source"] = "evolinkai"
+                cases.append(c)
+        print(f"  evolinkai {cat:14s}  {len(cases) - n_before:3d}")
+    return cases
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# ZeroLu parser — single README.md, ## sections + ### cases
+# Categories: 8 sections. Map "Typography & Poster" → poster, "Character" → character,
+# "UI/UX & Social" → ui (shared with EvoLink). Add new ones: photography, game, video,
+# infographics, image-editing.
+# ────────────────────────────────────────────────────────────────────────────
+ZEROLU_SECTIONS = [
+    ("📷 Photography & Photorealism", "photography"),
+    ("🎮 Game & Entertainment", "game"),
+    ("📱 UI/UX & Social Media", "ui"),
+    ("🎬 Video, Animation & Collage", "video"),
+    ("📰 Typography & Poster Design", "poster"),
+    ("📚 Infographics, Education & Documents", "infographics"),
+    ("🎭 Character & Consistency", "character"),
+    ("🖼️ Image Editing & Style Transfer", "image-editing"),
+]
+
+ZEROLU_RAW_BASE = "https://raw.githubusercontent.com/ZeroLu/awesome-gpt-image/main/"
+ZEROLU_H2_RE = re.compile(r"^##\s+(?P<title>.+?)$", re.M)
+ZEROLU_H3_RE = re.compile(r"^###\s+(?P<title>.+?)$", re.M)
+ZEROLU_PROMPT_RE = re.compile(r"\*\*Prompt:\*\*\s*\n+\s*```(?:\w*)?\n(?P<prompt>.*?)\n```", re.S)
+ZEROLU_SOURCE_RE = re.compile(r"\*?\*?Source:?\*?\*?:?\s*\[(?P<text>[^\]]+)\]\((?P<url>[^)]+)\)")
+
+
+def _resolve_zerolu_img(url: str) -> str:
+    if url.startswith(("http://", "https://", "//")):
+        return url
+    return ZEROLU_RAW_BASE + url.lstrip("./")
+
+
+def parse_zerolu(src: Path):
+    """Parse ZeroLu's main README into cases keyed by mapped category."""
+    path = src / "README.md"
+    if not path.exists():
+        print(f"  WARN: {path} missing")
+        return []
+    text = path.read_text(encoding="utf-8")
+
+    # Split into ## sections, keep only the ones in ZEROLU_SECTIONS
+    h2s = [(m.start(), m.group("title").strip()) for m in ZEROLU_H2_RE.finditer(text)]
+    h2s.append((len(text), ""))  # sentinel
+    title_to_cat = {t: c for (t, c) in ZEROLU_SECTIONS}
+
+    cases = []
+    per_cat_counter = {}
+
+    for i in range(len(h2s) - 1):
+        start, h2_title = h2s[i]
+        end = h2s[i + 1][0]
+        if h2_title not in title_to_cat:
+            continue
+        cat = title_to_cat[h2_title]
+        section = text[start:end]
+
+        # Find ### case headings within this section
+        h3s = [(m.start(), m.group("title").strip()) for m in ZEROLU_H3_RE.finditer(section)]
+        h3s.append((len(section), ""))
+        n_before = len([c for c in cases if c["category"] == cat or c.get("_z_cat") == cat])
+
+        for j in range(len(h3s) - 1):
+            block = section[h3s[j][0]:h3s[j + 1][0]]
+            title = h3s[j][1]
+
+            # First image — HTML <img> or markdown ![](...) — wins
+            img_html = IMG_HTML_RE.search(block)
+            img_md = IMG_MD_RE.search(block)
+            if img_html and (not img_md or img_html.start() <= img_md.start()):
+                img_src = img_html.group("src")
+            elif img_md:
+                img_src = img_md.group("src")
+            else:
+                continue
+            img_src = _resolve_zerolu_img(img_src)
+
+            # First fenced prompt
+            pm = ZEROLU_PROMPT_RE.search(block)
+            if not pm:
+                continue
+            prompt = pm.group("prompt").strip()
+
+            # Source/author (optional)
+            sm = ZEROLU_SOURCE_RE.search(block)
+            if sm:
+                author_text = sm.group("text").strip().lstrip("@")
+                source_url = sm.group("url").strip()
+                # X/Twitter handle → use as author; otherwise keep as plain text
+                author = author_text
+                author_url = source_url
+            else:
+                author = ""
+                author_url = ""
+                source_url = ""
+
+            per_cat_counter[cat] = per_cat_counter.get(cat, 0) + 1
+            num = per_cat_counter[cat]
+
+            cases.append({
+                "id": f"zerolu-{cat}-{num}",
+                "source": "zerolu",
+                "category": cat,
+                "num": num,
+                "title": title,
+                "source_url": source_url,
+                "author": author,
+                "author_url": author_url,
+                "image": img_src,
+                "prompt": prompt,
+                "extra_prompts": [],
+            })
+
+        added = per_cat_counter.get(cat, 0) - n_before
+        print(f"  zerolu    {cat:14s}  {added:3d}")
+
+    return cases
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Local cases — same format as EvoLink upstream
+# ────────────────────────────────────────────────────────────────────────────
+def parse_local():
+    if not LOCAL_CASES.exists():
+        return []
+    cases = []
+    for cat_dir in EVOLINK_CATS:
+        path = LOCAL_CASES / f"{cat_dir}.md"
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        matches = list(EVOLINK_CASE_RE.finditer(text))
+        for i, m in enumerate(matches):
+            start = m.start()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            c = parse_evolink_block(text[start:end], cat_dir, m.group("num"))
+            if c:
+                c["id"] = f"local-{cat_dir}-{m.group('num')}"
+                c["source"] = "local"
+                c["local"] = True
+                cases.append(c)
+        if cases:
+            print(f"  local     {cat_dir:14s}  {sum(1 for x in cases if x['category'] == cat_dir):3d}")
+    return cases
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Source registry
+# ────────────────────────────────────────────────────────────────────────────
+SOURCES = [
+    {
+        "id": "evolinkai",
+        "name": "EvoLinkAI",
+        "repo_url": "https://github.com/EvoLinkAI/awesome-gpt-image-2-prompts.git",
+        "dir": "awesome-gpt-image-2-prompts",
+        "parser": parse_evolink,
+    },
+    {
+        "id": "zerolu",
+        "name": "ZeroLu",
+        "repo_url": "https://github.com/ZeroLu/awesome-gpt-image.git",
+        "dir": "awesome-gpt-image",
+        "parser": parse_zerolu,
+    },
+]
+
+
+def ensure_clone(repo_url: str, dest: Path):
+    if (dest / ".git").exists():
+        print(f"  pulling {dest.name}")
+        subprocess.run(["git", "-C", str(dest), "pull", "--ff-only"], check=False, capture_output=True)
+    else:
+        print(f"  cloning {repo_url}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "clone", "--depth", "1", repo_url, str(dest)], check=True)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--only", help="Comma-separated source ids to build (e.g. 'evolinkai,zerolu')")
+    args = ap.parse_args()
+    only = set(args.only.split(",")) if args.only else None
+
+    all_cases = []
+    for s in SOURCES:
+        if only and s["id"] not in only:
+            continue
+        dest = CACHE / s["dir"]
+        ensure_clone(s["repo_url"], dest)
+        cs = s["parser"](dest)
         all_cases.extend(cs)
-        print(f"  {cat:14s}  {len(cs):3d} cases")
-    print(f"  {'TOTAL':14s}  {len(all_cases):3d} cases")
+        print(f"  {s['id']:10s} TOTAL          {len(cs):3d}")
+
+    local = parse_local()
+    all_cases.extend(local)
+
+    by_source = {}
+    for c in all_cases:
+        by_source[c["source"]] = by_source.get(c["source"], 0) + 1
+    print(f"\n  GRAND TOTAL: {len(all_cases)} cases  ({', '.join(f'{k}={v}' for k, v in by_source.items())})")
 
     cases_json = json.dumps(all_cases, ensure_ascii=False)
 

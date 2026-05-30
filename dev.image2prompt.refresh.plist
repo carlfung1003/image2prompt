@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Weekly refresh of image2prompt.carlfung.dev — Sundays 09:00 America/Los_Angeles.
+
+  To activate (one-time):
+    cp dev.image2prompt.refresh.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/dev.image2prompt.refresh.plist
+
+  To check status:
+    launchctl list | grep image2prompt
+
+  To force-run once (without waiting for Sunday):
+    launchctl start dev.image2prompt.refresh
+
+  To deactivate:
+    launchctl unload ~/Library/LaunchAgents/dev.image2prompt.refresh.plist
+    rm ~/Library/LaunchAgents/dev.image2prompt.refresh.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.image2prompt.refresh</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/carlfung/projects/image2prompt/refresh.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/carlfung/projects/image2prompt/.refresh.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/carlfung/projects/image2prompt/.refresh.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TZ</key>
+        <string>America/Los_Angeles</string>
+        <key>PATH</key>
+        <string>/Users/carlfung/.nvm/versions/node/v22.18.0/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/carlfung</string>
+    </dict>
+</dict>
+</plist>
