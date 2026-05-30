@@ -2,7 +2,7 @@
 
 A searchable static gallery of [GPT Image 2.0](https://openai.com/index/introducing-4o-image-generation/) prompts and outputs, merging the best public prompt libraries into one browseable view.
 
-**Live:** https://image2prompt.carlfung.dev
+**Live:** https://image2prompt.carlfung.dev · **Repo:** https://github.com/carlfung1003/image2prompt
 
 Filter by source, filter by category, search across titles + authors + prompt text, click any card for a full-size view with copy-to-clipboard.
 
