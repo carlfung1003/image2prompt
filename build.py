@@ -69,20 +69,25 @@ def parse_evolink_block(block, category, num):
 def parse_evolink(src: Path):
     cases = []
     for cat in EVOLINK_CATS:
-        path = src / "cases" / f"{cat}.md"
+        rel = f"cases/{cat}.md"
+        path = src / rel
         if not path.exists():
             print(f"  WARN: {path} missing")
             continue
         text = path.read_text(encoding="utf-8")
+        added = collect_added_dates(src, rel)
         matches = list(EVOLINK_CASE_RE.finditer(text))
         n_before = len(cases)
         for i, m in enumerate(matches):
             start = m.start()
             end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-            c = parse_evolink_block(text[start:end], cat, m.group("num"))
+            block = text[start:end]
+            c = parse_evolink_block(block, cat, m.group("num"))
             if c:
                 c["id"] = f"evolinkai-{cat}-{m.group('num')}"
                 c["source"] = "evolinkai"
+                heading = block.split("\n", 1)[0]
+                c["added_at"] = added.get(heading)
                 cases.append(c)
         print(f"  evolinkai {cat:14s}  {len(cases) - n_before:3d}")
     return cases
@@ -125,6 +130,7 @@ def parse_zerolu(src: Path):
         print(f"  WARN: {path} missing")
         return []
     text = path.read_text(encoding="utf-8")
+    added = collect_added_dates(src, "README.md")
 
     # Split into ## sections, keep only the ones in ZEROLU_SECTIONS
     h2s = [(m.start(), m.group("title").strip()) for m in ZEROLU_H2_RE.finditer(text)]
@@ -196,10 +202,11 @@ def parse_zerolu(src: Path):
                 "image": img_src,
                 "prompt": prompt,
                 "extra_prompts": [],
+                "added_at": added.get(f"### {title}"),
             })
 
-        added = per_cat_counter.get(cat, 0) - n_before
-        print(f"  zerolu    {cat:14s}  {added:3d}")
+        added_count = per_cat_counter.get(cat, 0) - n_before
+        print(f"  zerolu    {cat:14s}  {added_count:3d}")
 
     return cases
 
@@ -211,20 +218,30 @@ def parse_local():
     if not LOCAL_CASES.exists():
         return []
     cases = []
+    # Use the project repo's git history (cases-local lives here) for added_at;
+    # fall back to file mtime for uncommitted local cases.
+    proj_repo = HERE if (HERE / ".git").exists() else None
     for cat_dir in EVOLINK_CATS:
+        rel = f"cases-local/{cat_dir}.md"
         path = LOCAL_CASES / f"{cat_dir}.md"
         if not path.exists():
             continue
         text = path.read_text(encoding="utf-8")
+        added = collect_added_dates(proj_repo, rel) if proj_repo else {}
+        from datetime import datetime, timezone
+        mtime_iso = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
         matches = list(EVOLINK_CASE_RE.finditer(text))
         for i, m in enumerate(matches):
             start = m.start()
             end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-            c = parse_evolink_block(text[start:end], cat_dir, m.group("num"))
+            block = text[start:end]
+            c = parse_evolink_block(block, cat_dir, m.group("num"))
             if c:
                 c["id"] = f"local-{cat_dir}-{m.group('num')}"
                 c["source"] = "local"
                 c["local"] = True
+                heading = block.split("\n", 1)[0]
+                c["added_at"] = added.get(heading) or mtime_iso
                 cases.append(c)
         if cases:
             print(f"  local     {cat_dir:14s}  {sum(1 for x in cases if x['category'] == cat_dir):3d}")
@@ -259,7 +276,39 @@ def ensure_clone(repo_url: str, dest: Path):
     else:
         print(f"  cloning {repo_url}")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "clone", "--depth", "1", repo_url, str(dest)], check=True)
+        # Full history needed for added-date attribution per case
+        subprocess.run(["git", "clone", repo_url, str(dest)], check=True)
+        return
+    # If a previous run cloned with --depth 1, deepen so git log shows real dates
+    is_shallow = subprocess.run(
+        ["git", "-C", str(dest), "rev-parse", "--is-shallow-repository"],
+        capture_output=True, text=True,
+    ).stdout.strip() == "true"
+    if is_shallow:
+        print(f"  unshallowing {dest.name}")
+        subprocess.run(["git", "-C", str(dest), "fetch", "--unshallow"], check=False, capture_output=True)
+
+
+def collect_added_dates(repo_path: Path, file_rel: str) -> dict:
+    """Walk file's full diff history; return {added_line_text: earliest_iso_date}.
+
+    Used to attribute each `### Case N:` (EvoLink) or `### Title` (ZeroLu) heading
+    to the commit that first introduced it. setdefault preserves the earliest hit.
+    """
+    proc = subprocess.run(
+        ["git", "-C", str(repo_path), "log", "--reverse", "--format=COMMIT %cI", "-p", "--", file_rel],
+        capture_output=True, text=True,
+    )
+    dates = {}
+    cur_date = None
+    for line in proc.stdout.splitlines():
+        if line.startswith("COMMIT "):
+            cur_date = line[7:]
+        elif cur_date and line.startswith("+") and not line.startswith("+++"):
+            content = line[1:]
+            if content.startswith("### "):
+                dates.setdefault(content, cur_date)
+    return dates
 
 
 def main():

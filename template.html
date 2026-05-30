@@ -47,6 +47,15 @@
     padding: 8px 12px; color: var(--text); font-size: 14px; outline: none;
   }
   .search:focus { border-color: var(--line-strong); }
+  .sort-select {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; color: var(--text); font-size: 12px; outline: none;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+  }
+  .sort-select:focus { border-color: var(--line-strong); }
+  .added { font-size: 10px; color: var(--dim); margin-top: 3px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .chips { display: flex; gap: 6px; flex-wrap: wrap; max-width: 1600px; margin: 12px auto 0; padding: 0 24px; }
   .chip {
     padding: 5px 12px; border-radius: 999px;
@@ -206,6 +215,11 @@
     <h1>GPT-Image-2 <span class="accent">Prompt Gallery</span></h1>
     <span class="stats" id="resultCount">— cases</span>
     <input type="text" class="search" id="search" placeholder="Search prompts, titles, authors…  (⌘K)" autocomplete="off" />
+    <select class="sort-select" id="sort" title="Sort order">
+      <option value="default">DEFAULT</option>
+      <option value="newest">NEWEST</option>
+      <option value="oldest">OLDEST</option>
+    </select>
   </div>
   <div class="chips" id="srcChips"></div>
   <div class="chips" id="chips"></div>
@@ -233,6 +247,7 @@ const SOURCES = [
 let activeCat = "all";
 let activeSrc = "all";
 let query = "";
+let sortMode = "default";
 
 const grid = document.getElementById("grid");
 const empty = document.getElementById("empty");
@@ -282,14 +297,25 @@ function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&l
 
 function render() {
   const q = query.toLowerCase().trim();
-  const list = casesAfterSrc().filter(c => {
+  const tokens = q ? q.split(/\s+/).filter(Boolean) : [];
+  let list = casesAfterSrc().filter(c => {
     if (activeCat !== "all" && c.category !== activeCat) return false;
-    if (!q) return true;
-    return c.title.toLowerCase().includes(q)
-      || (c.author || "").toLowerCase().includes(q)
-      || c.prompt.toLowerCase().includes(q)
-      || c.category.includes(q);
+    if (!tokens.length) return true;
+    // Tokenized AND: every token must appear somewhere across title+author+prompt+category
+    const hay = (c.title + " " + (c.author || "") + " " + c.prompt + " " + c.category).toLowerCase();
+    return tokens.every(t => hay.includes(t));
   });
+  if (sortMode !== "default") {
+    const dir = sortMode === "newest" ? -1 : 1;
+    list = list.slice().sort((a, b) => {
+      const da = a.added_at || "";
+      const db = b.added_at || "";
+      if (!da && !db) return 0;
+      if (!da) return 1;   // undated → push to bottom regardless of direction
+      if (!db) return -1;
+      return da < db ? -dir : (da > db ? dir : 0);
+    });
+  }
   resultCount.textContent = `${list.length} cases`;
   if (list.length === 0) { grid.innerHTML = ""; empty.style.display = "block"; return; }
   empty.style.display = "none";
@@ -303,6 +329,7 @@ function render() {
       <div class="meta">
         <div class="title">${escapeHtml(c.title)}</div>
         <div class="author">${c.author ? '@' + escapeHtml(c.author) : ''}</div>
+        ${c.added_at ? `<div class="added">added ${c.added_at.slice(0,10)}</div>` : ''}
       </div>
       <div class="actions">
         <button class="btn" onclick="copyPrompt('${c.id}', this)">copy prompt</button>
@@ -335,6 +362,7 @@ function openModal(id) {
         <span class="mono" style="color:var(--muted);">#${c.num}</span>
         <span class="mono" style="color:var(--muted);">via ${c.source || 'evolinkai'}</span>
         ${c.author ? `<span class="mono" style="color:var(--muted);">by <a href="${c.author_url}" target="_blank" rel="noopener">@${escapeHtml(c.author)}</a></span>` : ''}
+        ${c.added_at ? `<span class="mono" style="color:var(--muted);">added ${c.added_at.slice(0,10)}</span>` : ''}
       </div>
       <div class="modal-title">${c.source_url ? `<a href="${c.source_url}" target="_blank" rel="noopener">${escapeHtml(c.title)} ↗</a>` : escapeHtml(c.title)}</div>
       <div class="modal-actions">
@@ -356,6 +384,7 @@ function closeModal(e) {
 
 // Search
 search.addEventListener("input", e => { query = e.target.value; render(); });
+document.getElementById("sort").addEventListener("change", e => { sortMode = e.target.value; render(); });
 
 // Hotkeys
 window.addEventListener("keydown", e => {
