@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <title>GPT Image 2.0 Prompt Gallery</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <style>
   :root {
     --bg: #0B0F1A;
@@ -24,6 +24,8 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
   body { -webkit-font-smoothing: antialiased; }
+  /* Mobile Safari: kill double-tap zoom (pinch zoom still works) */
+  html, body, button, input, select, a, .chip, .thumb { touch-action: manipulation; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -34,6 +36,14 @@
     background: rgba(11,15,26,0.85);
     border-bottom: 1px solid var(--line);
     padding: 14px 24px;
+    /* viewport-fit=cover: keep content clear of the notch in landscape */
+    padding-left: max(24px, env(safe-area-inset-left));
+    padding-right: max(24px, env(safe-area-inset-right));
+  }
+  /* Phones: the wrapped chip rows make this header 400px+ tall, so sticky
+     would cover most of the screen while scrolling — let it scroll away. */
+  @media (max-width: 640px), (max-height: 500px) {
+    header { position: static; }
   }
   .header-row {
     display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
@@ -45,12 +55,12 @@
   .search {
     flex: 1; min-width: 240px;
     background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-    padding: 8px 12px; color: var(--text); font-size: 14px; outline: none;
+    padding: 8px 12px; color: var(--text); font-size: 16px; outline: none; /* >=16px: no iOS focus zoom */
   }
   .search:focus { border-color: var(--line-strong); }
   .sort-select {
     background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-    padding: 8px 10px; color: var(--text); font-size: 12px; outline: none;
+    padding: 8px 10px; color: var(--text); font-size: 16px; outline: none; /* >=16px: no iOS focus zoom */
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     letter-spacing: 0.05em;
     cursor: pointer;
@@ -74,10 +84,15 @@
   .chip-count { color: var(--dim); margin-left: 6px; font-size: 10px; }
   .chip.active .chip-count { color: var(--accent); }
 
-  main { max-width: 1600px; margin: 0 auto; padding: 24px; }
+  main {
+    max-width: 1600px; margin: 0 auto; padding: 24px;
+    padding-left: max(24px, env(safe-area-inset-left));
+    padding-right: max(24px, env(safe-area-inset-right));
+  }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    /* min(): a 300px card no longer overflows a 320px phone */
+    grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
     gap: 16px;
   }
   .card {
@@ -160,6 +175,7 @@
     background: rgba(0,0,0,0.85); backdrop-filter: blur(8px);
     display: none; align-items: flex-start; justify-content: center;
     padding: 32px; overflow-y: auto;
+    overscroll-behavior: contain; /* modal scroll doesn't chain to the gallery */
   }
   .modal-bg.open { display: flex; }
   .modal {
@@ -199,6 +215,8 @@
     cursor: pointer; font-size: 18px;
     display: flex; align-items: center; justify-content: center;
   }
+  /* 36px visual, 44px finger target */
+  .modal-close::after { content: ""; position: absolute; inset: -4px; }
 
   .empty {
     text-align: center; padding: 80px 20px; color: var(--muted);
